@@ -1,0 +1,61 @@
+# Running-config / verificaciones: SW-Usuarios
+# Practica 3 - Infraestructura 2 (Jump Server) - Aaron Hernandez - 2025-0800
+
+SW-Usuarios#show running-config
+Building configuration...
+
+Current configuration : 1145 bytes
+!
+version 15.2
+service timestamps debug datetime msec
+service timestamps log datetime msec
+no service password-encryption
+service compress-config
+!
+hostname SW-Usuarios
+!
+no aaa new-model
+no ip domain-lookup
+ip cef
+no ipv6 cef
+!
+spanning-tree mode rapid-pvst
+spanning-tree extend system-id
+!
+vlan internal allocation policy ascending
+!
+interface Ethernet0/0
+ description Trunk hacia R-USER e0/1
+ switchport trunk allowed vlan 10
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+!
+interface Ethernet0/1
+ description Access hacia PC-Kali
+ switchport access vlan 10
+ switchport mode access
+ spanning-tree portfast edge
+!
+interface Ethernet0/2
+ description No usado
+ shutdown
+!
+interface Ethernet0/3
+ description No usado
+ shutdown
+!
+ip forward-protocol nd
+!
+no ip http server
+no ip http secure-server
+!
+banner motd ^CSW-Usuarios - Lab Jump Server - Matricula 2025-0800^C
+!
+line con 0
+ exec-timeout 0 0
+ logging synchronous
+line aux 0
+line vty 0 4
+ login
+!
+end

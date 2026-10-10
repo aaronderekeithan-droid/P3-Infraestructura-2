@@ -1,0 +1,78 @@
+# Web-Server
+# Practica 3 - Infraestructura 2 (Jump Server) - Aaron Hernandez - 2025-0800
+
+#Instalacion temporal por Cloud0 (Internet), despues se devuelve al port4
+ip route del default
+dhclient -v eth0
+resolvectl dns eth0 192.168.128.2
+
+#Hostname
+hostnamectl set-hostname Web-Server
+
+#Usuario
+adduser aaron
+usermod -aG sudo aaron
+
+#Paquetes instalados
+apt update
+apt install -y openssh-server apache2 openssl curl traceroute xrdp xfce4 xfce4-terminal
+#(Display manager: lightdm. El servidor sigue arrancando en modo texto)
+systemctl set-default multi-user.target
+
+#Certificado autofirmado
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/lab.key \
+  -out /etc/ssl/certs/lab.crt \
+  -subj "/C=DO/ST=Santo Domingo/O=ITLA/OU=Lab Jump Server/CN=10.8.0.130" \
+  -addext "subjectAltName=IP:10.8.0.130"
+
+#Apache HTTPS: /etc/apache2/sites-available/default-ssl.conf
+SSLCertificateFile      /etc/ssl/certs/lab.crt
+SSLCertificateKeyFile   /etc/ssl/private/lab.key
+
+a2enmod ssl
+a2ensite default-ssl
+systemctl enable apache2
+systemctl restart apache2
+
+#Pagina: /var/www/html/index.html
+# (Titulo: "Sistema de Caja" - Aaron Hernandez - 2025-0800)
+
+#SSH sin login de root
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+systemctl enable ssh
+systemctl restart ssh
+
+#RDP con escritorio XFCE
+echo "xfce4-session" > /home/aaron/.xsession
+chown aaron:aaron /home/aaron/.xsession
+adduser xrdp ssl-cert
+#(sin esto la sesion entraba y se devolvia al login de xrdp)
+sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
+systemctl enable xrdp
+systemctl restart xrdp xrdp-sesman
+
+#Red: /etc/netplan/01-lab.yaml
+network:
+  version: 2
+  ethernets:
+    eth0:
+      addresses: [10.8.0.130/29]
+      routes:
+        - to: 0.0.0.0/0
+          via: 10.8.0.129
+
+#cloud-init: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+network: {config: disabled}
+
+chmod 600 /etc/netplan/01-lab.yaml
+sync
+shutdown -h now
+#(cable de Cloud0 al port4 del FG-Server)
+
+# --- Verificacion ---
+# ip a                                  (eth0 con 10.8.0.130/29)
+# ip route                              (default via 10.8.0.129)
+# ping -c 4 10.8.0.129                (gateway FG-Server port4)
+# systemctl is-active apache2 ssh xrdp  (active active active)
+# curl -k https://10.8.0.130          (Sistema de Caja)

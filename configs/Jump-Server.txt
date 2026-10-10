@@ -1,0 +1,131 @@
+# Jump-Server
+# Practica 3 - Infraestructura 2 (Jump Server) - Aaron Hernandez - 2025-0800
+
+#Disco: despues de instalar se apago y se hizo commit en la VM de PNETLab
+cd /opt/unetlab/tmp/<ID-LAB>/<ID-NODO>/
+qemu-img info hda.qcow2
+qemu-img commit hda.qcow2
+mv /opt/unetlab/addons/qemu/winserver-2022-eval/cdrom.iso /root/winserver-2022.iso
+/opt/unetlab/wrappers/unl_wrapper -a fixpermissions
+
+#Dos NIC mientras se instala: e0 -> Cloud0 (Internet temporal), e1 -> FG-Server port2
+#Remote Desktop activado en Server Manager > Local Server
+
+#--- PowerShell (Admin) ---
+
+#Red
+Rename-NetAdapter -Name "Ethernet" -NewName "INTERNET-TEMP"
+Rename-NetAdapter -Name "Ethernet 2" -NewName "LAN-JUMP"
+New-NetIPAddress -InterfaceAlias "LAN-JUMP" -IPAddress 10.8.0.138 -PrefixLength 29
+New-NetRoute -DestinationPrefix 10.8.0.128/29 -InterfaceAlias "LAN-JUMP" -NextHop 10.8.0.137
+New-NetRoute -DestinationPrefix 10.8.0.192/27 -InterfaceAlias "LAN-JUMP" -NextHop 10.8.0.137
+Set-TimeZone -Id "SA Western Standard Time"
+Rename-Computer -NewName "JUMP-SERVER" -Restart
+
+#Active Directory + DNS (dominio itla.local)
+Set-DnsClient -InterfaceAlias "INTERNET-TEMP" -RegisterThisConnectionsAddress $false
+Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
+Install-ADDSForest -DomainName "itla.local" -DomainNetbiosName "ITLA" -InstallDns -Force -SafeModeAdministratorPassword (Read-Host -AsSecureString "Contrasena DSRM")
+
+#DNS solo en la IP de la LAN y sin el registro de la IP temporal
+dnscmd /ResetListenAddresses 10.8.0.138
+Set-DnsClientServerAddress -InterfaceAlias "LAN-JUMP" -ServerAddresses 10.8.0.138
+Set-DnsClientServerAddress -InterfaceAlias "INTERNET-TEMP" -ServerAddresses 10.8.0.138
+Add-DnsServerForwarder -IPAddress 192.168.128.2
+Get-DnsServerResourceRecord -ZoneName "itla.local" -RRType A | Where-Object { $_.RecordData.IPv4Address -eq "<IP-TEMPORAL>" } | Remove-DnsServerResourceRecord -ZoneName "itla.local" -Force
+Restart-Service DNS
+
+#Usuarios y grupos del dominio
+New-ADGroup -Name "RDS-Estandar" -GroupScope Global -Description "Usuarios sin privilegios: solo web"
+New-ADGroup -Name "RDS-Admin" -GroupScope Global -Description "Usuarios con privilegios: web, PuTTY y RDP"
+$p = Read-Host -AsSecureString "Contrasena de los usuarios"
+New-ADUser -Name "Luis Martinez" -GivenName "Luis" -Surname "Martinez" -SamAccountName "lmartinez" -UserPrincipalName "lmartinez@itla.local" -Description "Usuario sin privilegios" -AccountPassword $p -Enabled $true -PasswordNeverExpires $true
+New-ADUser -Name "Ana Gomez" -GivenName "Ana" -Surname "Gomez" -SamAccountName "agomez" -UserPrincipalName "agomez@itla.local" -Description "Usuario con privilegios" -AccountPassword $p -Enabled $true -PasswordNeverExpires $true
+Add-ADGroupMember -Identity "RDS-Estandar" -Members "lmartinez"
+Add-ADGroupMember -Identity "RDS-Admin" -Members "agomez"
+
+#Programas para los RemoteApps (Server 2022 solo trae Internet Explorer)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+New-Item -ItemType Directory "C:\Program Files\PuTTY" -Force
+Invoke-WebRequest "https://the.earth.li/~sgtatham/putty/latest/w64/putty.exe" -OutFile "C:\Program Files\PuTTY\putty.exe" -UseBasicParsing
+Invoke-WebRequest "https://download.mozilla.org/?product=firefox-msi-latest-ssl&os=win64&lang=es-ES" -OutFile "C:\firefox.msi" -UseBasicParsing
+Start-Process msiexec -ArgumentList "/i C:\firefox.msi /qn" -Wait
+
+#RDS (GUI: Server Manager > Manage > Add Roles and Features >
+# Remote Desktop Services installation > Quick Start > Session-based desktop deployment)
+# -> crea la coleccion QuickSessionCollection
+
+#Coleccion y RemoteApps
+Import-Module RemoteDesktop
+$cb = "JUMP-SERVER.itla.local"
+Set-RDSessionCollectionConfiguration -CollectionName "QuickSessionCollection" -UserGroup "ITLA\RDS-Estandar","ITLA\RDS-Admin" -ConnectionBroker $cb
+Get-RDRemoteApp -CollectionName "QuickSessionCollection" -ConnectionBroker $cb | ForEach-Object {
+    Remove-RDRemoteApp -CollectionName "QuickSessionCollection" -Alias $_.Alias -ConnectionBroker $cb -Force
+}
+New-RDRemoteApp -CollectionName "QuickSessionCollection" -DisplayName "Sistema de Caja (Web)" -Alias "caja-web" `
+  -FilePath "C:\Program Files\Mozilla Firefox\firefox.exe" `
+  -CommandLineSetting Require -RequiredCommandLine "https://10.8.0.130" `
+  -UserGroups "ITLA\RDS-Estandar","ITLA\RDS-Admin" -ConnectionBroker $cb
+New-RDRemoteApp -CollectionName "QuickSessionCollection" -DisplayName "PuTTY (SSH)" -Alias "putty" `
+  -FilePath "C:\Program Files\PuTTY\putty.exe" `
+  -UserGroups "ITLA\RDS-Admin" -ConnectionBroker $cb
+New-RDRemoteApp -CollectionName "QuickSessionCollection" -DisplayName "Escritorio Remoto (RDP)" -Alias "mstsc" `
+  -FilePath "C:\Windows\System32\mstsc.exe" `
+  -UserGroups "ITLA\RDS-Admin" -ConnectionBroker $cb
+
+#Licencias por usuario (el Web Client no funciona por dispositivo)
+Add-RDServer -Server $cb -Role RDS-LICENSING -ConnectionBroker $cb
+Set-RDLicenseConfiguration -LicenseServer $cb -Mode PerUser -ConnectionBroker $cb -Force
+
+#Certificado del despliegue
+New-Item -ItemType Directory "C:\Certs" -Force
+$cert = New-SelfSignedCertificate -Subject "CN=JUMP-SERVER.itla.local" `
+  -TextExtension @("2.5.29.17={text}DNS=JUMP-SERVER.itla.local&DNS=jump-server&IPAddress=10.8.0.138") `
+  -CertStoreLocation "Cert:\LocalMachine\My" -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(5)
+$pw = Read-Host -AsSecureString "Contrasena del PFX"
+Export-PfxCertificate -Cert $cert -FilePath "C:\Certs\jump-server.pfx" -Password $pw
+Export-Certificate -Cert $cert -FilePath "C:\Certs\jump-server.cer"
+Import-Certificate -FilePath "C:\Certs\jump-server.cer" -CertStoreLocation "Cert:\LocalMachine\Root"
+Set-RDCertificate -Role RDRedirector -ImportPath "C:\Certs\jump-server.pfx" -Password $pw -ConnectionBroker $cb -Force
+Set-RDCertificate -Role RDPublishing -ImportPath "C:\Certs\jump-server.pfx" -Password $pw -ConnectionBroker $cb -Force
+Set-RDCertificate -Role RDWebAccess  -ImportPath "C:\Certs\jump-server.pfx" -Password $pw -ConnectionBroker $cb -Force
+
+#El listener RDP con el mismo certificado (certlm.msc > Manage Private Keys > NETWORK SERVICE: Read)
+$thumb = (Get-PfxCertificate "C:\Certs\jump-server.cer").Thumbprint
+$ts = Get-CimInstance -Namespace root\cimv2\TerminalServices -ClassName Win32_TSGeneralSetting -Filter "TerminalName='RDP-Tcp'"
+Set-CimInstance -InputObject $ts -Property @{SSLCertificateSHA1Hash=$thumb}
+
+#RD Web Client (HTML5)
+Install-PackageProvider -Name NuGet -Force
+Install-Module -Name PowerShellGet -Force -AllowClobber
+#(cerrar PowerShell y abrir otro)
+Install-Module -Name RDWebClientManagement -Force -AcceptLicense
+Install-RDWebClientPackage
+Import-RDWebClientBrokerCert "C:\Certs\jump-server.cer"
+Publish-RDWebClientPackage -Type Production -Latest
+
+#RD Gateway (sin gateway el Web Client se desconectaba al abrir las apps)
+Add-RDServer -Server $cb -Role RDS-GATEWAY -ConnectionBroker $cb -GatewayExternalFqdn $cb
+Set-RDCertificate -Role RDGateway -ImportPath "C:\Certs\jump-server.pfx" -Password $pw -ConnectionBroker $cb -Force
+Set-RDDeploymentGatewayConfiguration -GatewayMode Custom -GatewayExternalFqdn $cb -LogonMethod Password -UseCachedCredentials $true -BypassLocal $false -ConnectionBroker $cb -Force
+iisreset
+
+#Connection Broker no arrancaba solo despues de reiniciar (es DC), se pone en arranque retrasado
+sc.exe config 'MSSQL$MICROSOFT##WID' start= delayed-auto
+sc.exe config Tssdis start= delayed-auto
+
+#Quitar la NIC temporal
+New-NetRoute -DestinationPrefix 0.0.0.0/0 -InterfaceAlias "LAN-JUMP" -NextHop 10.8.0.137
+Remove-DnsServerForwarder -IPAddress 192.168.128.2 -Force
+Disable-NetAdapter -Name "INTERNET-TEMP" -Confirm:$false
+#(en PNETLab se borra el cable e0 - Cloud0)
+
+#Nota: Administrator no esta en la coleccion, para entrar por RDP se usa
+# mstsc /admin /v:<IP>
+
+# --- Verificacion ---
+# Get-RDRemoteApp -CollectionName "QuickSessionCollection" -ConnectionBroker $cb | ft DisplayName,UserGroups
+# Get-RDLicenseConfiguration -ConnectionBroker $cb        (PerUser)
+# Get-RDWebClientPackage                                  (rd-html5 2.1.85.0 Production)
+# Get-Service 'MSSQL$MICROSOFT##WID', Tssdis, TSGateway   (Running)
+# https://jump-server.itla.local/RDWeb/webclient

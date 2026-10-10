@@ -1,0 +1,89 @@
+# PC-Kali (Kali 2026.2)
+# Practica 3 - Infraestructura 2 (Jump Server) - Aaron Hernandez - 2025-0800
+
+#Instalacion temporal por Cloud0
+ip -br a
+apt update
+apt install -y strongswan strongswan-starter libcharon-extra-plugins libcharon-extauth-plugins libstrongswan-extra-plugins
+
+#strongSwan 6.1 de Kali ya no trae el plugin xauth-generic (el cliente no
+#puede mandar usuario/clave por XAuth). Se bajo a la 6.0.1 de Debian trixie
+echo "deb http://deb.debian.org/debian trixie main" > /etc/apt/sources.list.d/trixie.list
+apt update
+V=6.0.1-6+deb13u6
+apt install -y --allow-downgrades -o Dpkg::Options::="--force-confold" \
+  strongswan=$V strongswan-starter=$V strongswan-charon=$V strongswan-libcharon=$V \
+  libstrongswan=$V libstrongswan-standard-plugins=$V libstrongswan-extra-plugins=$V \
+  libcharon-extauth-plugins=$V libcharon-extra-plugins=$V
+apt-mark hold strongswan strongswan-starter strongswan-charon strongswan-libcharon libstrongswan libstrongswan-standard-plugins libstrongswan-extra-plugins libcharon-extauth-plugins libcharon-extra-plugins
+rm /etc/apt/sources.list.d/trixie.list
+apt update
+
+#Nombre del Jump Server
+echo "10.8.0.138 jump-server.itla.local jump-server" >> /etc/hosts
+
+#(cable de Cloud0 a SW-Usuarios e0/1, IP por DHCP: 10.8.0.11/25)
+
+#Cliente VPN: /etc/ipsec.conf
+config setup
+    charondebug="ike 1, knl 1, cfg 1"
+
+conn base
+    keyexchange=ikev1
+    aggressive=yes
+    ike=des-md5-modp1536!
+    esp=des-md5-modp1536!
+    left=%defaultroute
+    leftauth=psk
+    leftauth2=xauth
+    leftsourceip=%config
+    right=20.25.0.2
+    rightid=%any
+    rightauth=psk
+    rightsubnet=10.8.0.138/32
+    auto=ignore
+
+conn lmartinez
+    also=base
+    leftid=@lmartinez
+    xauth_identity=lmartinez
+    auto=add
+
+conn agomez
+    also=base
+    leftid=@agomez
+    xauth_identity=agomez
+    auto=add
+
+#Credenciales: /etc/ipsec.secrets  (chmod 600)
+: PSK "<PRE-SHARED-KEY>"
+lmartinez : XAUTH "<PASSWORD>"
+agomez : XAUTH "<PASSWORD>"
+
+#Pruebas SIN VPN
+nc -zv -w 5 10.8.0.138 443                     # timed out
+
+#Usuario sin privilegios
+ipsec start
+ipsec up lmartinez
+# XAuth authentication of 'lmartinez' (myself) successful
+# installing new virtual IP 10.8.0.200
+# CHILD_SA lmartinez{1} established ... 10.8.0.200/32 === 10.8.0.138/32
+ip -br a                                         # eth0 con 10.8.0.200/32
+curl -k -s -o /dev/null -w "%{http_code}\n" https://jump-server.itla.local/RDWeb/webclient/    # 200
+nc -zv -w 5 10.8.0.138 22                      # timed out (Bloqueo-SSH-Estandar)
+nc -zv -w 5 10.8.0.138 3389                    # timed out (Implicit Deny)
+# Firefox: https://jump-server.itla.local/RDWeb/webclient  -> ITLA\lmartinez
+#   solo aparece "Sistema de Caja (Web)"
+ipsec down lmartinez
+
+#Usuario con privilegios
+ipsec up agomez
+nc -zv -w 5 10.8.0.138 3389                    # open
+nc -zv -w 5 10.8.0.138 22                      # timed out
+# Firefox: https://jump-server.itla.local/RDWeb/webclient  -> ITLA\agomez
+#   Sistema de Caja (Web)    -> https://10.8.0.130
+#   PuTTY (SSH)              -> aaron@10.8.0.130
+#   Escritorio Remoto (RDP)  -> 10.8.0.130, sesion Xorg, escritorio XFCE
+ipsec down agomez
+ipsec status                                     # 0 up, 0 connecting

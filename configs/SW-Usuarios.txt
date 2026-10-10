@@ -1,0 +1,45 @@
+# SW-Usuarios
+# Practica 3 - Infraestructura 2 (Jump Server) - Aaron Hernandez - 2025-0800
+
+enable
+configure terminal
+hostname SW-Usuarios
+no ip domain-lookup
+banner motd #SW-Usuarios - Lab Jump Server - Matricula 2025-0800#
+
+vlan 10
+ name USUARIOS
+exit
+
+interface Ethernet0/0
+ description Trunk hacia R-USER e0/1
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk allowed vlan 10
+ no shutdown
+exit
+
+interface Ethernet0/1
+ description Access hacia PC-Kali
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast edge
+ no shutdown
+exit
+
+interface range Ethernet0/2 - 3
+ description No usado
+ shutdown
+exit
+
+line console 0
+ logging synchronous
+ exec-timeout 0 0
+exit
+
+end
+write memory
+
+# --- Verificacion ---
+# show vlan brief                 (VLAN 10 USUARIOS con Et0/1)
+# show interfaces trunk           (Et0/0 trunking, solo vlan 10)

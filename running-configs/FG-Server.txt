@@ -1,0 +1,156 @@
+# Running-config / verificaciones: FG-Server
+# Practica 3 - Infraestructura 2 (Jump Server) - Aaron Hernandez - 2025-0800
+# (Las claves del FortiGate aparecen como ENC <oculto>)
+
+FG-Server # get system interface physical
+== [onboard]
+==[port1]
+mode: static
+ip: 20.25.0.2 255.255.255.252
+status: up
+==[port2]
+mode: static
+ip: 10.8.0.137 255.255.255.248
+status: up
+==[port3]
+mode: static
+ip: 192.168.128.141 255.255.255.0
+status: up
+==[port4]
+mode: static
+ip: 10.8.0.129 255.255.255.248
+status: up
+==[port5]
+mode: static
+ip: 0.0.0.0 0.0.0.0
+status: down
+
+FG-Server # get router info routing-table all
+Routing table for VRF=0
+S*      0.0.0.0/0 [10/0] via 20.25.0.1, port1
+C       10.8.0.128/29 is directly connected, port4
+C       10.8.0.136/29 is directly connected, port2
+C       20.25.0.0/30 is directly connected, port1
+C       192.168.128.0/24 is directly connected, port3
+
+FG-Server # show firewall address Jump-Server
+config firewall address
+    edit "Jump-Server"
+        set subnet 10.8.0.138 255.255.255.255
+    next
+end
+
+FG-Server # show firewall address Web-Server
+config firewall address
+    edit "Web-Server"
+        set subnet 10.8.0.130 255.255.255.255
+    next
+end
+
+FG-Server # show firewall address VPN-JUMP_range
+config firewall address
+    edit "VPN-JUMP_range"
+        set type iprange
+        set start-ip 10.8.0.200
+        set end-ip 10.8.0.210
+    next
+end
+
+FG-Server # show user group
+config user group
+    edit "VPN-Estandar"
+        set member "lmartinez"
+    next
+    edit "VPN-Admin"
+        set member "agomez"
+    next
+end
+
+FG-Server # show vpn ipsec phase1-interface VPN-JUMP
+config vpn ipsec phase1-interface
+    edit "VPN-JUMP"
+        set type dynamic
+        set interface "port1"
+        set mode aggressive
+        set peertype any
+        set net-device disable
+        set mode-cfg enable
+        set proposal des-md5
+        set dhgrp 5
+        set xauthtype auto
+        set ipv4-start-ip 10.8.0.200
+        set ipv4-end-ip 10.8.0.210
+        set dns-mode auto
+        set ipv4-split-include "VPN-JUMP_split"
+        set psksecret ENC <oculto>
+    next
+end
+
+FG-Server # show vpn ipsec phase2-interface VPN-JUMP
+config vpn ipsec phase2-interface
+    edit "VPN-JUMP"
+        set phase1name "VPN-JUMP"
+        set proposal des-md5
+        set dhgrp 5
+        set keepalive enable
+    next
+end
+
+#(con agomez conectado desde el Kali)
+FG-Server # get vpn ipsec tunnel summary
+'VPN-JUMP_0' 20.25.8.2:4500  selectors(total,up): 1/1  rx(pkt,err): 0/0  tx(pkt,err): 0/0
+
+FG-Server # show firewall policy
+config firewall policy
+    edit 3
+        set name "Bloqueo-SSH-Estandar"
+        set srcintf "VPN-JUMP"
+        set dstintf "port2"
+        set srcaddr "VPN-JUMP_range"
+        set dstaddr "Jump-Server"
+        set schedule "always"
+        set service "SSH"
+        set logtraffic all
+        set groups "VPN-Estandar"
+        set comments "Bloqueo explicito de SSH al usuario sin privilegios"
+    next
+    edit 4
+        set name "Jump-Servicios-Web"
+        set srcintf "port2"
+        set dstintf "port4"
+        set srcaddr "Jump-Server"
+        set dstaddr "Web-Server"
+        set action accept
+        set schedule "always"
+        set service "RDP" "SSH" "HTTPS"
+        set logtraffic all
+        set comments "Jump Server al Web Server: HTTPS, RDP y SSH"
+    next
+    edit 2
+        set name "Estandar-HTTPS-Jump"
+        set srcintf "VPN-JUMP"
+        set dstintf "port2"
+        set srcaddr "VPN-JUMP_range"
+        set dstaddr "Jump-Server"
+        set action accept
+        set schedule "always"
+        set service "HTTPS"
+        set logtraffic all
+        set groups "VPN-Estandar"
+        set comments "Usuario sin privilegios: solo HTTPS al Jump Server"
+    next
+    edit 1
+        set name "Admin-Acceso-Jump"
+        set srcintf "VPN-JUMP"
+        set dstintf "port2"
+        set srcaddr "VPN-JUMP_range"
+        set dstaddr "Jump-Server"
+        set action accept
+        set schedule "always"
+        set service "HTTPS" "RDP"
+        set logtraffic all
+        set groups "VPN-Admin"
+        set comments "Usuario con privilegios: HTTPS y RDP al Jump Server"
+    next
+end
+#(la politica 3 no muestra "set action" porque deny es el valor por defecto)

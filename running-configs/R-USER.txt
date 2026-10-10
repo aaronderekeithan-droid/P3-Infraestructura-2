@@ -1,0 +1,77 @@
+# Running-config / verificaciones: R-USER
+# Practica 3 - Infraestructura 2 (Jump Server) - Aaron Hernandez - 2025-0800
+
+R-USER#show running-config
+Building configuration...
+
+Current configuration : 1667 bytes
+!
+version 15.4
+service timestamps debug datetime msec
+service timestamps log datetime msec
+no service password-encryption
+!
+hostname R-USER
+!
+no aaa new-model
+!
+ip dhcp excluded-address 10.8.0.1 10.8.0.9
+ip dhcp excluded-address 10.8.0.101 10.8.0.127
+!
+ip dhcp pool VLAN10-USUARIOS
+ network 10.8.0.0 255.255.255.128
+ default-router 10.8.0.1
+ dns-server 8.8.8.8
+!
+no ip domain lookup
+ip cef
+no ipv6 cef
+!
+interface Ethernet0/0
+ description WAN hacia ISP
+ ip address 20.25.8.2 255.255.255.252
+ ip nat outside
+ ip virtual-reassembly in
+ ip tcp adjust-mss 1360
+!
+interface Ethernet0/1
+ description Trunk hacia SW-Usuarios
+ no ip address
+!
+interface Ethernet0/1.10
+ description VLAN 10 - Usuarios
+ encapsulation dot1Q 10
+ ip address 10.8.0.1 255.255.255.128
+ ip nat inside
+ ip virtual-reassembly in
+ ip tcp adjust-mss 1360
+!
+interface Ethernet0/2
+ no ip address
+ shutdown
+!
+interface Ethernet0/3
+ no ip address
+ shutdown
+!
+ip forward-protocol nd
+!
+no ip http server
+no ip http secure-server
+ip nat inside source list NAT-LAN interface Ethernet0/0 overload
+ip route 0.0.0.0 0.0.0.0 20.25.8.1
+!
+ip access-list extended NAT-LAN
+ permit ip 10.8.0.0 0.0.0.127 any
+!
+banner motd ^CR-USER - Lab Jump Server - Matricula 2025-0800^C
+!
+line con 0
+ exec-timeout 0 0
+ logging synchronous
+line aux 0
+line vty 0 4
+ login
+ transport input none
+!
+end

@@ -1,0 +1,64 @@
+# R-USER
+# Practica 3 - Infraestructura 2 (Jump Server) - Aaron Hernandez - 2025-0800
+
+enable
+configure terminal
+hostname R-USER
+no ip domain-lookup
+banner motd #R-USER - Lab Jump Server - Matricula 2025-0800#
+
+#DHCP VLAN 10
+ip dhcp excluded-address 10.8.0.1 10.8.0.9
+ip dhcp excluded-address 10.8.0.101 10.8.0.127
+ip dhcp pool VLAN10-USUARIOS
+ network 10.8.0.0 255.255.255.128
+ default-router 10.8.0.1
+ dns-server 8.8.8.8
+exit
+
+#Interfaces
+
+interface Ethernet0/0
+ description WAN hacia ISP
+ ip address 20.25.8.2 255.255.255.252
+ ip nat outside
+ ip tcp adjust-mss 1360
+ no shutdown
+exit
+
+interface Ethernet0/1
+ description Trunk hacia SW-Usuarios
+ no ip address
+ no shutdown
+exit
+
+interface Ethernet0/1.10
+ description VLAN 10 - Usuarios
+ encapsulation dot1Q 10
+ ip address 10.8.0.1 255.255.255.128
+ ip nat inside
+ ip tcp adjust-mss 1360
+exit
+
+#Ruta por defecto hacia el ISP
+ip route 0.0.0.0 0.0.0.0 20.25.8.1
+
+#NAT (la VPN del cliente sale con NAT-T por el puerto 4500)
+ip access-list extended NAT-LAN
+ permit ip 10.8.0.0 0.0.0.127 any
+exit
+ip nat inside source list NAT-LAN interface Ethernet0/0 overload
+
+line console 0
+ logging synchronous
+ exec-timeout 0 0
+exit
+
+end
+write memory
+
+# --- Verificacion ---
+# show ip interface brief
+# show ip route
+# show ip dhcp binding            (10.8.0.11 -> PC-Kali)
+# show ip nat translations        (udp 20.25.8.2:4500 -> 20.25.0.2:4500 con la VPN arriba)
