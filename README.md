@@ -1,8 +1,8 @@
 # Práctica 3 – Infraestructura 2: Jump Server con VPN de acceso remoto
 
-## 🎥 Video de la demostración
+## Video de la demostración
 
-**[agregar enlace del video aquí]**
+**(https://youtu.be/t9Hf1T2DOjU)**
 
 ---
 
@@ -10,7 +10,7 @@
 **Estudiante:** Aaron Hernández · **Matrícula:** 2025-0800 · **Carrera:** Ciberseguridad
 **Docente:** Jonathan Esteban Rondón Corniel
 
-### 📂 Archivos
+### Archivos
 
 | Equipo | Configuración (comandos usados) | Running-config |
 |---|---|---|
